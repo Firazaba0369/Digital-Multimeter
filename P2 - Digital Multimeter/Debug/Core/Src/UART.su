@@ -1,0 +1,2 @@
+../Core/Src/UART.c:10:6:UART_print	16	static
+../Core/Src/UART.c:24:6:UART_init	4	static
