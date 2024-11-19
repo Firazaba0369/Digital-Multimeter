@@ -36,6 +36,40 @@ void ADC1_2_IRQHandler(void){
 }
 
 /**
+  * @brief Print Voltage
+  * @retval None
+  */
+void print_voltage(uint16_t voltage_mv){
+	char volt_str[5];
+
+	//convert to digits
+	uint8_t ones = voltage_mv / VDIV_ONES;
+	uint8_t tenths = (voltage_mv % VDIV_ONES) / VDIV_TENTHS;
+	uint8_t hundredths = ((voltage_mv % VDIV_TENTHS)+ROUND_FACTOR) / VDIV_HUNDREDTHS; //+5 rounding factor
+
+	// Adjust for overflow caused by rounding
+	if (hundredths > 9) {
+		hundredths = 0;
+		if (tenths < 9) {
+			tenths++;
+		} else {
+			tenths = 0;
+			ones++;
+		}
+	}
+	//convert voltage to a string
+	volt_str[0] = ('0' + ones);
+	volt_str[1] = '.';
+	volt_str[2] = ('0' + tenths);
+	volt_str[3] = ('0' + hundredths);
+	volt_str[4] = '\0';
+
+	//print to UART
+	UART_print(volt_str);
+	return;
+}
+
+/**
   * @brief Get Avg of 20 Values
   * @retval uint16_t
   */

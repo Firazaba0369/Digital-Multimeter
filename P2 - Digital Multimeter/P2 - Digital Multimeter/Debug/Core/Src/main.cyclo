@@ -1,0 +1,8 @@
+../Core/Src/main.c:56:5:main	6
+../Core/Src/main.c:123:6:TIM2_IRQHandler	5
+../Core/Src/main.c:145:10:refine_volt	7
+../Core/Src/main.c:177:10:compute_vrms	3
+../Core/Src/main.c:202:6:compute_fft	2
+../Core/Src/main.c:217:6:output_measurements	9
+../Core/Src/main.c:317:6:SystemClock_Config	4
+../Core/Src/main.c:365:6:Error_Handler	1

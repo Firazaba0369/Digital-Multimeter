@@ -37,10 +37,8 @@
 #define SCALED_INTERCEPT 1
 #define SCALING_FACTOR 10000
 #define REFINE_VAL 5
+#define BAR_INC 100
 
-
-
-arm_rfft_fast_instance_f32 fftHandler;
 //global variables
 volatile float fft_in[FFT_SIZE];
 volatile float fft_out[FFT_SIZE];
@@ -48,20 +46,19 @@ volatile float freq_mag[FFT_SIZE/2] = {0};
 volatile uint8_t dc_sampling = NO_SAMPLE;
 
 //function prototypes
+arm_rfft_fast_instance_f32 fftHandler;
 void output_measurements(uint16_t freq, uint16_t dc_volt, uint16_t pp_volt, uint16_t rms_volt);
 uint16_t refine_volt(uint16_t voltage, uint16_t *array, uint16_t array_size);
 void compute_fft(uint16_t *samples, uint16_t dc_offset);
+uint16_t compute_vrms(uint16_t samples[], uint16_t num_samples, uint16_t dc_offset);
 void SystemClock_Config(void);
 
-/**
-  * @brief  The application entry point.
-  * @retval int
-  */
 int main(void)
 {
   /* Reset of all peripherals, Initializes the Flash interface and the Systick. */
   HAL_Init();
   SystemClock_Config();
+
   //initialize FFT, ADC, timer,and UART
   arm_rfft_fast_init_f32(&fftHandler, FFT_SIZE);
   ADC_init();
@@ -71,18 +68,15 @@ int main(void)
   //sampling arrays for AC and DC
   uint16_t ac_samples[FFT_SIZE] = {0};
   uint16_t dc_samples[DC_SAMPLE_SIZE] = {0};
-  uint16_t peak_freq = 0;
 
-  //reset screen and cursor
-  UART_print("\x1B[2J");
-  UART_print("\x1B[H");
+//  //reset screen and cursor
+//  UART_print("\x1B[2J");
+//  UART_print("\x1B[H");
   while (1)
   {
 	  //collect AC and DC samples
-	  //ac_sampling = SAMPLE;
 	  collect_samples(ac_samples, FFT_SIZE);
-	  //ac_sampling = NO_SAMPLE;
-	  dc_sampling = SAMPLE; //still may not work. Double check this
+	  dc_sampling = SAMPLE;
 	  collect_samples(dc_samples, DC_SAMPLE_SIZE);
 	  dc_sampling = NO_SAMPLE;
 
@@ -91,6 +85,7 @@ int main(void)
 
 	  //compute fft and perform calculations
 	  compute_fft(ac_samples, offset);
+	  uint16_t peak_freq = 0;
 	  float max_magnitude = 0.0f;
 	  for(int i = 0; i<FFT_SIZE/2;i++){
 		  uint16_t cur_freq = (uint16_t)(i * SAMPLE_RATE_HZ / ((float)FFT_SIZE));
@@ -102,7 +97,7 @@ int main(void)
 	  }
 
 	  //compute and refine DC measurement
-	  uint16_t vdc = (get_max(dc_samples, DC_SAMPLE_SIZE)+get_min(dc_samples, DC_SAMPLE_SIZE))/2;//get_avg(dc_samples, DC_SAMPLE_SIZE);
+	  uint16_t vdc = (get_max(dc_samples, DC_SAMPLE_SIZE)+get_min(dc_samples, DC_SAMPLE_SIZE))/2;
 	  vdc = refine_volt(vdc,dc_samples,DC_SAMPLE_SIZE);
 
 	  //compute and refine AC measurements
@@ -110,7 +105,7 @@ int main(void)
 	  uint16_t ac_min = get_min(ac_samples, FFT_SIZE);
 	  uint16_t vpp = (ac_max - ac_min);
 	  vpp = vpp>99 ? refine_volt(vpp,ac_samples,FFT_SIZE): 0;
-	  uint16_t vrms = (vpp/(2*sqrt(2)));
+	  uint16_t vrms = compute_vrms(ac_samples, FFT_SIZE, offset);
 	  vrms = vpp > 0 ? refine_volt(vrms,ac_samples,FFT_SIZE): 0;
 
 	  //calibrate frequency
@@ -119,6 +114,28 @@ int main(void)
 	  //output to terminal
 	  output_measurements(calibrated_freq, vdc, vpp, vrms);
   }
+}
+
+/**
+  * @brief Timer 2 interrupt handler
+  * @retval None
+  */
+void TIM2_IRQHandler(void){
+	//check for update event flag of ARR
+	if (TIM2->SR & TIM_SR_UIF){
+		if (!dc_sampling){
+			ADC1->CR |= ADC_CR_ADSTART;
+		}
+		//clear update event interrupt flag
+		TIM2->SR &= ~(TIM_SR_UIF);
+	}
+	else if (TIM2->SR & TIM_SR_CC1IF){
+		if (dc_sampling){
+			ADC1->CR |= ADC_CR_ADSTART;
+		}
+		//clear and update CCR1 flag
+		TIM2->SR &= ~(TIM_SR_CC1IF);
+	}
 }
 
 /**
@@ -154,25 +171,28 @@ uint16_t refine_volt(uint16_t voltage, uint16_t *array, uint16_t array_size){
 }
 
 /**
-  * @brief Timer 2 interrupt handler
+  * @brief Compute RMS voltage of AC signal
   * @retval None
   */
-void TIM2_IRQHandler(void){
-	//check for update event flag of ARR
-	if (TIM2->SR & TIM_SR_UIF){
-		if (!dc_sampling){ //figure this out
-			ADC1->CR |= ADC_CR_ADSTART;
-		}
-		//clear update event interrupt flag
-		TIM2->SR &= ~(TIM_SR_UIF);
-	}
-	else if (TIM2->SR & TIM_SR_CC1IF){
-		if (dc_sampling){
-			ADC1->CR |= ADC_CR_ADSTART;
-		}
-		//clear and update CCR1 flag
-		TIM2->SR &= ~(TIM_SR_CC1IF);
-	}
+uint16_t compute_vrms(uint16_t samples[], uint16_t num_samples, uint16_t dc_offset) {
+	uint32_t sum_of_squares = 0;
+	int16_t voltages[num_samples];
+
+	//convert ADC to voltage values
+	for (int i = 0; i < num_samples; i++) {
+		voltages[i] = (int16_t)((samples[i]*VREF)/BIT_SIZE)-dc_offset;
+	 }
+
+    // Square each sample and accumulate
+    for (int i = 0; i < num_samples; i++) {
+        sum_of_squares += (voltages[i] * voltages[i]);
+    }
+
+    // Calculate the mean of squares
+    uint32_t mean_of_squares = sum_of_squares / num_samples;
+
+    // Return the square root of the mean
+    return (uint16_t)sqrt(mean_of_squares);
 }
 
 /**
@@ -180,15 +200,14 @@ void TIM2_IRQHandler(void){
   * @retval None
   */
 void compute_fft(uint16_t *samples, uint16_t dc_offset){
-	//
 	//convert to float
 	for (int i = 0; i < FFT_SIZE; i++) {
-
 		fft_in[i] = (((((float)samples[i]*VREF)/BIT_SIZE)-dc_offset)/1000);
 	 }
-	 // Perform FFT
-	 arm_rfft_fast_f32(&fftHandler, fft_in, fft_out, 0);
-	 arm_cmplx_mag_f32(fft_out, freq_mag, FFT_SIZE/2);
+
+	// Perform FFT and perform complex math
+	arm_rfft_fast_f32(&fftHandler, fft_in, fft_out, 0);
+	arm_cmplx_mag_f32(fft_out, freq_mag, FFT_SIZE/2);
 }
 
 /**
@@ -204,41 +223,53 @@ void output_measurements(uint16_t freq, uint16_t dc_volt, uint16_t pp_volt, uint
 	UART_print("\x1B[2J");
 	UART_print("\x1B[H");
 
-	//print frequency
+	//print frequency, Vdc, Vpp, and Vrms numerical values
 	UART_print("Frequency: ");
 	UART_print(freq_str);
-	UART_print(" Hz\n");
+	UART_print("Hz ");
+	UART_print("Vdc: ");
+	print_voltage(dc_volt);
+	UART_print("v");
+	UART_print("\x1B[1C");
+	UART_print("Vpp: ");
+	print_voltage(pp_volt);
+	UART_print("v");
+	UART_print("\x1B[1C");
+	UART_print("Vrms: ");
+	print_voltage(rms_volt);
+	UART_print("v");
+	UART_print("\x1B[1C");
 	UART_print("\x1B[2;0H");
 
 	//print DC voltage bar
 	UART_print("Vdc  ");
 	UART_print("#");
-	uint16_t bar_idx = 100;
+	uint16_t bar_idx = BAR_INC;
 	while(dc_volt > bar_idx){
 	  UART_print("#");
-	  bar_idx += 100;
+	  bar_idx += BAR_INC;
 	}
 	UART_print("\n");
 	UART_print("\x1B[3;0H");
 
-	//print Peak-to-Peak voltage
+	//print Peak-to-Peak voltage bar
 	UART_print("Vpp  ");
 	UART_print("#");
-	bar_idx = 100;
+	bar_idx = BAR_INC;
 	while(pp_volt > bar_idx){
 	  UART_print("#");
-	  bar_idx += 100;
+	  bar_idx += BAR_INC;
 	}
 	UART_print("\n");
 	UART_print("\x1B[4;0H");
 
-	//print RMS voltage
+	//print RMS voltage bar
 	UART_print("Vrms ");
 	UART_print("#");
-	bar_idx = 100;
+	bar_idx = BAR_INC;
 	while(rms_volt > bar_idx){
 	  UART_print("#");
-	  bar_idx += 100;
+	  bar_idx += BAR_INC;
 	}
 	UART_print("\n");
 	UART_print("\x1B[5;6H");
@@ -251,7 +282,7 @@ void output_measurements(uint16_t freq, uint16_t dc_volt, uint16_t pp_volt, uint
 	UART_print("\n");
 	UART_print("\x1B[6;0H");
 
-	//print bar values
+	//print horizontal axis values
 	uint8_t first_dig = 0;
 	uint8_t second_dig = 0;
 	UART_print("\x1B[4C");
@@ -266,6 +297,7 @@ void output_measurements(uint16_t freq, uint16_t dc_volt, uint16_t pp_volt, uint
 	  else{
 		  second_dig = 5;
 	  }
+
 	  //format
 	  char dig1[2] = {'0' + first_dig, '\0'};
 	  char dig2[2] = {'0' + second_dig, '\0'};

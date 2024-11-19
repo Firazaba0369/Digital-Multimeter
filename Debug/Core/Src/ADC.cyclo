@@ -1,7 +1,0 @@
-../Drivers/CMSIS/Include/core_cm4.h:1679:22:__NVIC_EnableIRQ	2
-../Core/Src/ADC.c:13:6:collect_samples	3
-../Core/Src/ADC.c:29:6:ADC1_2_IRQHandler	2
-../Core/Src/ADC.c:42:10:get_avg	2
-../Core/Src/ADC.c:58:10:get_min	4
-../Core/Src/ADC.c:75:10:get_max	3
-../Core/Src/ADC.c:92:6:ADC_init	4
